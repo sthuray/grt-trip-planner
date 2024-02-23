@@ -645,7 +645,7 @@ def main():
                             print(f"Stop #{stop}: {time[i].time()}")
                             stop_path_counter+=1
                     else:
-                        print(f"Stop #{stop}: {time[i].time()}")
+                        print(f"Stop #{stop}: {time.time()}")
                     stop_path_counter += 1
                 print()
     
