@@ -4,14 +4,13 @@ import datetime
 from datetime import datetime
 import json
 
-#enter starting stop and end stop
+# enter starting stop and end stop, search stop number in GRT_GTFS/stops.csv
 ORIGIN = 3852
 DESTINATION = 6120
 
 # user data
-current_time = datetime.now()
+current_time = datetime.now() - (datetime(year=2024, month=2, day=23, hour=5, minute=0) - datetime(year=2024, month=2, day=23, hour=0, minute=0))
 current_date = current_time.date()
-#current_time = '09:25:00'
 day_of_week = current_time.weekday()
 
 if day_of_week <= 5:
@@ -54,6 +53,7 @@ index_to_shape = {}
 adj_stops_per_route = {}
 routes_in_schedule = []
 route_trees = {}
+stop_id_to_name = {}
 
 # read from routes_masterlist.csv
 ROUTES_INDEX = 0
@@ -127,6 +127,20 @@ def read_in_routes():
             adj_stops_per_route[index] = adj_stops
             connections[index] = conn_array
 
+def read_in_stops():
+    with open("GRT_GTFS/stops.csv", newline='') as file:
+        reader = csv.reader(file)
+        next(reader)
+
+        for row in reader:
+            try:
+                stop_id = int(row[0])
+            except:
+                continue
+            stop_name = row[2]
+
+            stop_id_to_name[stop_id] = stop_name
+
 def remove_unscheduled_routes():
     for i in range(len(connections)):
         route_index = list(connections)[i]
@@ -145,6 +159,7 @@ def remove_unscheduled_routes():
             del route_names[route_index]
             del adj_stops_per_route[route_index]
 
+# TODO: consider adjacent_stops from the origin stop
 def find_routes_w_stop(stop_id):
 
     # new route index
@@ -177,7 +192,6 @@ def add_leaf(empty_leaf, index):
     return conn_array
 
 # checks connection dictionary to see if any connections exist to one of the destination routes
-# TODO: create a global variable for connected routes or return them
 # Requires: route is the index
 def find_route_connections(new_leaves):
     path_found = False
@@ -341,13 +355,13 @@ def find_path(new_leaves, path_acc, route):
             create_path(path_acc, [])
             new_path_num = len(stop_paths)
             if new_path_num != current_path_num:
-                print(path_acc_copy)
+                #print(path_acc_copy)
                 route_paths.append(path_acc_copy)
                 trip_string = ""
                 for i in range(len(path_acc_copy)):
                     trip_string = trip_string + route_names[path_acc_copy[i]] + ", "
-                print(trip_string[:-2])
-                print()
+                #print(trip_string[:-2])
+                #print()
                     
         
         if path_acc != orig_path_acc:
@@ -498,9 +512,9 @@ def get_time_path(shape_path, stop_path):
     if time_found == False:
         return
 
-    print(shape_path)
-    print(time_path[list(time_path)[0]])
-    print(time_path[list(time_path)[-1]])
+    print(f"{shape_path} ({len(time_path)} stops)")
+    print(f"Departure: {time_path[list(time_path)[0]].time()}")
+    print(f"Arrival:   {time_path[list(time_path)[-1]].time()}")
     print()
     return time_path
 
@@ -581,12 +595,14 @@ dest_routes = find_routes_w_stop(DESTINATION)
 time_paths = {}
 def main():
 
-    print(f"dest_routes: {dest_routes}")
-    print(f"orig_routes: {orig_routes}")
+    print("Finding paths...")
     
     while len(stop_paths) == 0:
         add_leaves(route_trees, [])
-
+    
+    print()
+    if len(route_paths) > 0:
+        print("Possible path options: ")
     smallest_time = ''
     for i in range(len(route_paths)):
         route_path = route_paths[i]
@@ -611,8 +627,12 @@ def main():
                     smallest_time = path_time
     
     if len(time_paths) == 0:
-        print("No routes found for today")
+        print("No routes found for today, try again tomorrow!")
+    else:
+        print("Printing shortest path(s)...")
+        read_in_stops()
     counter = 0
+
     for i in range(len(time_paths)):
         time_path_key = list(time_paths)[i]
         time_paths_for_route = time_paths[time_path_key]
@@ -621,31 +641,40 @@ def main():
             path_time = time_path[list(time_path)[-1]] - time_path[list(time_path)[0]]
             if path_time == smallest_time:
                 route_path = route_paths[time_path_key]
+
+                # get trip string
+                trip_string = ''
+                for i in range(len(route_path)):
+                    trip_string = trip_string + route_names[shape_to_index[route_path[i]]] + ", "
+                trip_string = trip_string[:-2]
+
                 stop_path = stop_paths[time_path_key][j]
                 counter += 1
                 stop_path_counter = 0
                 trip_counter = 0
-                print(f"Option {counter} ({len(time_path)} stops): ")
-                print(f"Board trip #{route_path[trip_counter]}")
+                print()
+                print(f"{trip_string} ({len(time_path)} stops):")
+                print(f"Board {route_names[shape_to_index[route_path[trip_counter]]]}")
                 trip_counter += 1
                 for k in range(len(time_path)):
                     time = time_path[list(time_path)[k]]
                     stop = list(time_path)[k]
                     stop_path_element = stop_path[stop_path_counter]
                     if stop_path_element == TRANSFER:
-                        print(f"Transfer to stop #{stop} to board trip #{route_path[trip_counter]}")
+                        print(f"Transfer to stop {stop} ({stop_id_to_name[stop]}) to board {route_names[shape_to_index[route_path[trip_counter]]]}")
                         stop_path_counter += 1
+                        trip_counter += 1
                     
                     if isinstance(time, list):
                         for i in range(len(time)):
                             stop_path_element = stop_path[stop_path_counter]
                             if (stop_path_element == SWITCH_BUS):
-                                print(f"Board trip #{route_path[trip_counter]}")
+                                print(f"Board {route_names[shape_to_index[route_path[trip_counter]]]}")
                                 trip_counter += 1
-                            print(f"Stop #{stop}: {time[i].time()}")
+                            print(f"{time[i].time()} - ({stop}) {stop_id_to_name[stop]}")
                             stop_path_counter+=1
                     else:
-                        print(f"Stop #{stop}: {time.time()}")
+                        print(f"{time.time()} - ({stop}) {stop_id_to_name[stop]}")
                     stop_path_counter += 1
                 print()
     
