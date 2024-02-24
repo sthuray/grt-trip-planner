@@ -3,7 +3,7 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import cred
 
-user_id = "31kmezols3jp2yhannitby4r3dey"
+user_id = ""
 artist = "Santhosh Narayanan"
 scope = "playlist-modify-private"
 
