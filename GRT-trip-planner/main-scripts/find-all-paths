@@ -9,7 +9,7 @@ ORIGIN = 3852
 DESTINATION = 6120
 
 # user data
-current_time = datetime.now() - (datetime(year=2024, month=2, day=23, hour=5, minute=0) - datetime(year=2024, month=2, day=23, hour=0, minute=0))
+current_time = datetime.now() 
 current_date = current_time.date()
 day_of_week = current_time.weekday()
 
