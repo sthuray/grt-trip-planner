@@ -1,0 +1,709 @@
+import csv
+import itertools
+import datetime
+from datetime import datetime
+import json
+
+# enter starting stop and end stop, search stop number in GRT_GTFS/stops.csv
+ORIGIN = int(input()) #3852
+DESTINATION = int(input()) #6120
+
+# user data
+current_time = datetime.now() 
+current_date = current_time.date()
+day_of_week = current_time.weekday()
+
+if day_of_week <= 5:
+    datasheet = 'weekday.csv'
+elif day_of_week == 6:
+    datasheet = 'saturday.csv'
+elif day_of_week == 7:
+    datasheet = 'sunday.csv'
+
+datasheet = '/Users/sayithuray/Documents/GitHub/sayithuray/GRT-trip-planner/schedules/' + datasheet
+
+def check_for_holiday():
+    with open('/Users/sayithuray/Documents/GitHub/sayithuray/GRT-trip-planner/GRT_GTFS/calendar_dates.csv', newline='') as file:
+        reader = csv.reader(file)
+        next(reader)
+
+        holiday_found = False
+
+        for row in reader:
+            date = row[1]
+            exception_date = datetime.strptime(date, '%Y%m%d') 
+            exception_date = exception_date.date()
+            service_id = row[0]
+            if 'Holiday1' in service_id:
+                holiday_found = True
+                if (exception_date == current_date):
+                    datasheet = 'schedules/holiday1.csv'
+            elif holiday_found == True:
+                return
+
+route_paths = []
+stop_paths = {} # route_path_index: stop_path 
+orig_routes = []
+dest_routes = []
+routes = {}
+route_names = {}
+connections = {}
+shape_to_index = {}
+index_to_shape = {}
+adj_stops_per_route = {}
+routes_in_schedule = []
+route_trees = {}
+stop_id_to_name = {}
+
+# read from routes_masterlist.csv
+ROUTES_INDEX = 0
+ROUTES_SHAPE_ID = 1
+ROUTES_ROUTE_ID = 2
+ROUTES_DIRECTION_ID = 3
+ROUTES_TRIP_HEADSIGN = 4
+ROUTES_ROUTE_AS_STOP_IDS = 5
+ROUTES_CONNECTED_ROUTES = 6
+ROUTES_ADJACENT_STOP_DICT = 7
+
+# read from one of the schedule sheets
+SCHEDULE_SHAPE_ID = 0
+SCHEDULE_BLOCK_IDS = 1
+SCHEDULE_TRIP_IDS = 2
+
+def verify_schedule_routes(): 
+    with open(datasheet, newline='') as file:
+        reader = csv.reader(file)
+        next(reader)
+
+        for row in reader:
+            shape_id = int(row[0])
+            routes_in_schedule.append(shape_id)
+
+# find the index of each route that includes the stop_id and saves it in route dictionary
+# returns {shape_id: index} dictionary of new routes found
+def read_in_routes():
+    with open("/Users/sayithuray/Documents/GitHub/sayithuray/GRT-trip-planner/routes_masterlist.csv", newline='') as file:
+        reader = csv.reader(file)
+        next(reader)
+
+        for row in reader:
+            index = int(row[ROUTES_INDEX])
+            shape_id = int(row[ROUTES_SHAPE_ID])
+
+            route_id = row[ROUTES_ROUTE_ID]
+            #direction_id = int(row[ROUTES_DIRECTION_ID])
+            trip_headsign = row[ROUTES_TRIP_HEADSIGN]
+
+            route = row[ROUTES_ROUTE_AS_STOP_IDS].strip('][').split(', ')
+            for i in range(len(route)):
+                route[i] = int(route[i])
+
+            conn_array = row[ROUTES_CONNECTED_ROUTES].strip('][').split(', ')
+            for i in range(len(conn_array)):
+                conn_array[i] = int(conn_array[i])
+
+            route_name = route_id + " " + trip_headsign
+
+            # convert adj_stop_dictionary into a dictionary
+            string_adj_stop_dict = row[ROUTES_ADJACENT_STOP_DICT]
+            string_adj_stop_dict = string_adj_stop_dict.replace('{', '{"')
+            string_adj_stop_dict = string_adj_stop_dict.replace(':', '":')
+            string_adj_stop_dict = string_adj_stop_dict.replace('], ', '], "')
+            # convert adj_stop keys to ints
+            adj_stops = json.loads(string_adj_stop_dict)
+            temp_keys = list(adj_stops)
+            for i in range(len(adj_stops)):
+                key = list(adj_stops)[i]
+                adj_stops[int(key)] = adj_stops[key]
+            for i in range(len(temp_keys)):
+                del adj_stops[temp_keys[i]]
+            
+            # initialize conversion dictionaries
+            index_to_shape[index] = shape_id
+            shape_to_index[shape_id] = index
+
+            routes[index] = route
+            route_names[index] = route_name
+            adj_stops_per_route[index] = adj_stops
+            connections[index] = conn_array
+
+def read_in_stops():
+    with open("/Users/sayithuray/Documents/GitHub/sayithuray/GRT-trip-planner/GRT_GTFS/stops.csv", newline='') as file:
+        reader = csv.reader(file)
+        next(reader)
+
+        for row in reader:
+            try:
+                stop_id = int(row[0])
+            except:
+                continue
+            stop_name = row[2]
+
+            stop_id_to_name[stop_id] = stop_name
+
+def remove_unscheduled_routes():
+    for i in range(len(connections)):
+        route_index = list(connections)[i]
+        conn_array = connections[route_index]
+
+        for j in range(len(conn_array)):
+            conn_index = conn_array[j]
+            shape_id = index_to_shape[conn_index]
+            if shape_id not in routes_in_schedule:
+                del conn_index
+
+        # delete routes if they are unscheduled
+        shape_id = index_to_shape[route_index]
+        if shape_id not in routes_in_schedule:
+            del routes[route_index]
+            del route_names[route_index]
+            del adj_stops_per_route[route_index]
+
+# TODO: consider adjacent_stops from the origin stop
+def find_routes_w_stop(stop_id):
+
+    # new route index
+    new_routes = []
+
+    # iterates through each route, looking for any that include the stop_id
+    for i in range(len(routes)):
+        route_index = list(routes)[i]
+        route = routes[route_index]
+
+        # if found a route containing stop_id
+        if stop_id in route:
+            new_routes.append(route_index)
+    
+    return new_routes
+
+# Given an array of routes(shape_ids), adds connections to each route to the connections array
+#                                , also returns new connections as a dictionary
+# Requires: index_array is already sorted 
+#           index_array only contains integers
+def add_leaf(empty_leaf, index):
+    conn_array = connections[index]
+                        
+    # add connection array to tree
+    for k in range(len(conn_array)):
+        route_index = conn_array[k]
+        if route_index in routes:
+            empty_leaf[route_index] = {}
+        
+    return conn_array
+
+# checks connection dictionary to see if any connections exist to one of the destination routes
+# Requires: route is the index
+def find_route_connections(new_leaves):
+    path_found = False
+    dest_routes_found = []
+    for i in range(len(dest_routes)):
+        dest_route = dest_routes[i]
+
+        if dest_route in new_leaves:
+            path_found = True
+            dest_routes_found.append(dest_route)
+    
+    return path_found, dest_routes_found
+
+TRANSFER = 1
+SWITCH_BUS = 0
+# recursively creates a path (in terms of stop_ids) connecting to the destination (if possible)
+def create_path(trip_path, stop_acc):
+    path_array = []
+    path = []
+    connect_to_origin = False
+    connect_to_destination = False
+
+    new_route = trip_path[-1]
+    trip_path.pop()
+
+    rt_1 = routes[new_route]
+
+    # TODO: can save this as a global variable
+    # if connecting to one of the orig_routes:
+    if new_route in orig_routes:
+        connect_to_origin = True
+        for i in range(len(rt_1)):
+            if rt_1[i] == ORIGIN:
+                rt_1_start = i
+    
+    # if connecting to one of the dest_routes
+    if new_route in dest_routes:
+        connect_to_destination = True
+        stop_acc.append(DESTINATION)
+
+    # determines index(es) of connection between new_route and stop_acc 
+    adj_stops = adj_stops_per_route[new_route]
+    rt_1_conn_arr = []
+    rt_2_conn_arr = []
+    transfer_arr = []
+
+    for j in range(len(rt_1)):
+        for k in range(len(stop_acc)):
+            rt_1_stop = rt_1[j]
+            rt_2_stop = stop_acc[k]
+            if rt_2_stop == TRANSFER:
+                continue
+            if rt_1_stop == rt_2_stop:
+                rt_1_conn_arr.append(j)
+                rt_2_conn_arr.append(k)
+                transfer_arr.append(False)
+            
+            # now check adj stops of route_1
+            for l in range(len(adj_stops[rt_1_stop])):
+                adj_rt_1_stop = adj_stops[rt_1_stop][l]
+                if adj_rt_1_stop == rt_2_stop:
+                    
+                    # appends original stop_index and transfer stop
+                    rt_1_conn_arr.append(j)
+                    rt_2_conn_arr.append(k)
+                    transfer_arr.append(True)
+
+    # deletes connections if invalid
+    del_arr = []
+    for l in range(len(rt_2_conn_arr)):
+        if connect_to_origin and (rt_1_conn_arr[l] < rt_1_start):
+            del_arr.append(l)
+    del_arr.reverse()
+    for p in range(len(del_arr)):
+        del rt_2_conn_arr[del_arr[p]]
+        del rt_1_conn_arr[del_arr[p]]
+        del transfer_arr[del_arr[p]]
+
+    # for debugging
+    if len(rt_1_conn_arr) == 0:
+        return 
+
+    # creates path and adds it to array of paths (if valid connections exist)
+    for o in range(len(rt_1_conn_arr)):
+        rt_1_conn = rt_1_conn_arr[o]
+        rt_2_conn = rt_2_conn_arr[o]
+        transfer = transfer_arr[o]
+        
+        for m in range(len(rt_1)):
+            if connect_to_origin:
+                if m == rt_1_start:
+                    path.append(rt_1[m])
+                    connect_to_origin = False
+                else:
+                    continue
+            elif m == rt_1_conn:
+                path.append(rt_1[m])
+                if connect_to_destination != True:
+                    if transfer == True:
+                        path.append(TRANSFER)
+                    else:
+                        path.append(SWITCH_BUS)
+                break
+            else:
+                path.append(rt_1[m])
+
+        # add stop_acc to end of current route
+        if connect_to_destination != True:
+            path.extend(stop_acc[(rt_2_conn):])
+        path_array.append(path)
+        path = []
+
+    # create duplicate trip_path, so trip_path only equals 0 in the recursive function call 
+    trip_path_copy = []
+    for i in range(len(trip_path)):
+        trip_path_copy.append(trip_path[i])
+
+    for i in range(len(path_array)):
+        if len(trip_path) > 0:
+            create_path(trip_path_copy, path_array[i])
+        else:
+            if len(route_paths) not in stop_paths:
+                stop_paths[len(route_paths)] = []
+            stop_paths[len(route_paths)].append(path_array[i])
+        
+        # create duplicate trip_path again
+        trip_path_copy = []
+        for i in range(len(trip_path)):
+            trip_path_copy.append(trip_path[i])
+
+NO_INITIAL_ROUTE = -1
+def find_path(new_leaves, path_acc, route):
+    path_bool_and_dests = find_route_connections(new_leaves)
+    path_found = path_bool_and_dests[0]
+
+    if path_found:
+
+        # initializes originally passed path_acc (for backtracking through the tree)
+        orig_path_acc = []
+        for i in range(len(path_acc)):
+            orig_path_acc.append(path_acc[i])
+
+        if route != NO_INITIAL_ROUTE:
+            # check for duplicates
+            if route in path_acc:
+                return
+            else:
+                path_acc.append(route)
+
+        dests = path_bool_and_dests[1]
+
+        for j in range(len(dests)):
+            
+            path_acc.append(dests[j])
+            current_path_num = len(stop_paths)
+
+            path_acc_copy = []
+            for k in range(len(path_acc)):
+                path_acc_copy.append(path_acc[k])
+
+            create_path(path_acc, [])
+            new_path_num = len(stop_paths)
+            if new_path_num != current_path_num:
+                #print(path_acc_copy)
+                route_paths.append(path_acc_copy)
+                trip_string = ""
+                for i in range(len(path_acc_copy)):
+                    trip_string = trip_string + route_names[path_acc_copy[i]] + ", "
+                #print(trip_string[:-2])
+                #print()
+                    
+        
+        if path_acc != orig_path_acc:
+            path_acc = []
+            for j in range(len(orig_path_acc)):
+                path_acc.append(orig_path_acc[j])
+
+def create_root_nodes():
+    for i in range(len(orig_routes)):
+        route_trees[orig_routes[i]] = {}
+
+def add_leaves(route_tree, path_acc):
+    new_leaves = 0
+
+    # initializes originally passed path_acc (for backtracking through the tree)
+    orig_path_acc = []
+    for i in range(len(path_acc)):
+        orig_path_acc.append(path_acc[i])
+
+    # goes through all current leaves, gets new leaves, and checks for connections
+    for i in range(len(route_tree)):
+        route = list(route_tree)[i]
+
+        # if branch is not empty
+        if len(route_tree[route]) > 0:
+            path_acc.append(route)
+            add_leaves(route_tree[route], path_acc)
+        else:
+            new_leaves = add_leaf(route_tree[route], route)
+            find_path(new_leaves, path_acc, route)
+        
+        if path_acc != orig_path_acc:
+            path_acc = []
+            for j in range(len(orig_path_acc)):
+                path_acc.append(orig_path_acc[j])
+
+    if len(route_tree) == 0:
+        create_root_nodes()
+        new_leaves = orig_routes
+        route = NO_INITIAL_ROUTE
+        find_path(new_leaves, path_acc, route)
+
+#TODO: check for block routes
+#TODO: test for midnight times
+def get_time_path(shape_path, stop_path):
+    time_now = current_time
+    time_checkpoint = time_now
+
+    time_path = {}
+    # assume stop_path has at least 1 element
+    stop_path_index = 0
+    stop_id = stop_path[stop_path_index] 
+
+    for i in range(len(shape_path)):
+        if i > 0:
+            if time_found == False:
+                return
+                
+        time_found = False
+        depart_time = '' 
+        shape_id = shape_path[i]
+        route = routes[shape_to_index[shape_id]]
+        
+
+        stop_path_index = len(time_path) + i
+        if i > 1:
+            stop_path_index += 1
+        if len(time_path) > 0:
+            time_checkpoint = time_path[list(time_path)[-1]]
+            time_now = time_checkpoint
+        stop_id = stop_path[stop_path_index]
+
+        bus_switch = False
+        if stop_path_index > 0:
+            if stop_path[stop_path_index - 1] == SWITCH_BUS:
+                bus_switch = True
+
+        route_index = 0
+        # get route_index
+        while (stop_id != route[route_index]):
+            route_index += 1
+
+            # if transfer (no connection between routes) 
+            if route_index == len(route):
+                route_index = 0
+                stop_path_index += 1 
+                stop_id = stop_path[stop_path_index] 
+                break
+        route_checkpoint = route_index
+        stop_checkpoint = stop_path_index
+
+        # get all possible trips for the given shape_id
+        possible_trip_ids = trips_by_shape[shape_id]
+
+        with open('/Users/sayithuray/Documents/GitHub/sayithuray/GRT-trip-planner/GRT_GTFS/stop_times.csv', newline='') as file:
+            reader = csv.reader(file)
+            next(reader)
+
+            for row in reader:
+                current_trip_id = int(row[0])
+
+                if current_trip_id in possible_trip_ids:
+                    if (route_index >= len(route)) or (stop_id != route[route_index]):
+                        time_now = time_checkpoint
+                        stop_path_index = stop_checkpoint
+                        stop_id = stop_path[stop_path_index]
+                        route_index = route_checkpoint
+
+                    current_stop_id = int(row[3])
+
+                    if current_stop_id == stop_id:
+                        
+                        # TODO: if arrival time != departure_time
+                        if row[1][:2] == '24':
+                            row[1] = '00' + row[1][2:]
+                        new_time = datetime.strptime(row[1], '%H:%M:%S')
+                        new_time = new_time.replace(current_time.year, current_time.month, current_time.day)
+
+                        if (new_time >= time_now): 
+                            time_path_extended = False 
+                            if stop_path_index == stop_checkpoint:
+                                if (depart_time == '') or (new_time < depart_time):
+                                    depart_time = new_time
+                                    time_found = True
+                                    if (bus_switch == True):
+                                        if isinstance(time_path[stop_id], list):
+                                            del time_path[stop_id][-1]
+                                            time_path[stop_id].append(new_time)
+                                        else:
+                                            time_path[stop_id] = [time_path[stop_id], new_time]
+                                    else:
+                                        time_path[stop_id] = new_time
+                                    time_now = new_time
+                                    time_path_extended = True
+                            else:
+                                time_path[stop_id] = new_time
+                                time_now = new_time
+                                time_path_extended = True
+
+                            if time_path_extended == True:   
+                                if (stop_path_index + 1) < len(stop_path):
+                                    stop_path_index += 1
+                                    route_index += 1
+                                    stop_id = stop_path[stop_path_index]
+                                else:
+                                    route_index += 1
+    
+    if time_found == False:
+        return
+
+    #print(f"{shape_path} ({len(time_path)} stops)")
+    #print(f"Departure: {time_path[list(time_path)[0]].time()}")
+    #print(f"Arrival:   {time_path[list(time_path)[-1]].time()}")
+    #print()
+    return time_path
+
+trips_by_shape = {}
+def read_in_trips():
+    with open(datasheet, newline='') as file:
+        reader = csv.reader(file)
+        next(reader)
+
+        for row in reader:
+            shape_id = int(row[0])
+
+            trip_ids = row[2].strip('][').split(', ')
+            for i in range(len(trip_ids)):
+                trip_ids[i] = int(trip_ids[i])
+            
+            if len(trip_ids) == 0:
+                del routes[shape_to_index[shape_id]]
+                del route_names[shape_to_index[shape_id]]
+                del adj_stops_per_route[shape_to_index[shape_id]]
+            else:
+                trips_by_shape[shape_id] = trip_ids
+            
+# gets route and connection from paths_masterlist.csv and adds it
+def get_route(index):
+    with open('/Users/sayithuray/Documents/GitHub/sayithuray/GRT-trip-planner/routes_masterlist.csv', newline='') as f:
+        reader = csv.reader(f)
+        next(reader)
+
+        row = next(itertools.islice(reader, index, None))
+
+        route = row[5].strip('][').split(', ')
+        for i in range(len(route)):
+            route[i] = int(route[i])
+        
+
+        conn_arr = row[6].strip('][').split(', ')
+        for i in range(len(conn_arr)):
+            conn_arr[i] = int(conn_arr[i])
+
+        
+        route_headsign = row[4]
+        route_id = row[2]
+        route_name = route_id + " " + route_headsign
+
+        # convert string dictionary to json format
+        string_dict = row[7]
+        string_dict = string_dict.replace('{', '{"')
+        string_dict = string_dict.replace(':', '":')
+        string_dict = string_dict.replace('], ', '], "')
+
+        # convert adj_stop keys to ints
+        adj_stops = json.loads(string_dict)
+        temp_keys = list(adj_stops)
+        for i in range(len(adj_stops)):
+            key = list(adj_stops)[i]
+            adj_stops[int(key)] = adj_stops[key]
+            
+        for i in range(len(temp_keys)):
+            del adj_stops[temp_keys[i]]
+                
+        # add to route and connections dictionaries for future reference
+        routes[index] = route
+        route_names[index] = route_name
+        connections[index] = conn_arr
+        adj_stops_per_route[index] = adj_stops
+
+def setup():
+    check_for_holiday()
+    verify_schedule_routes()
+    read_in_routes()
+    remove_unscheduled_routes()
+    read_in_trips()
+
+def print_stop_paths(smallest_time):
+    counter = 0
+    console_output = []
+    
+    for i in range(len(time_paths)):
+        time_path_key = list(time_paths)[i]
+        time_paths_for_route = time_paths[time_path_key]
+        for j in range(len(time_paths_for_route)):
+            time_path = time_paths_for_route[j]
+            path_time = time_path[list(time_path)[-1]] - time_path[list(time_path)[0]]
+            if path_time == smallest_time:
+                route_path = route_paths[time_path_key]
+
+                # get trip string
+                trip_string = 'Trip info: '
+                for i in range(len(route_path)):
+                    route_name = route_names[shape_to_index[route_path[i]]]
+                    trip_string = trip_string + route_name + " -> "
+                trip_string = trip_string[:-4]
+
+                stop_path = stop_paths[time_path_key][j]
+                counter += 1
+                stop_path_counter = 0
+                trip_counter = 0
+                print()
+
+                next_line = f"{trip_string} ({len(time_path)} stops, time: {path_time}):"
+                print(next_line)
+                console_output.append(next_line)
+
+                next_line = f"Board {route_names[shape_to_index[route_path[trip_counter]]]}"
+                console_output.append(next_line)
+                print(next_line)
+
+                trip_counter += 1
+                for k in range(len(time_path)):
+                    time = time_path[list(time_path)[k]]
+                    stop = list(time_path)[k]
+                    stop_path_element = stop_path[stop_path_counter]
+                    if stop_path_element == TRANSFER:
+                        next_line = f"Transfer to stop {stop} ({stop_id_to_name[stop]}) to board {route_names[shape_to_index[route_path[trip_counter]]]}"
+                        print(next_line)
+                        console_output.append(next_line)
+
+                        stop_path_counter += 1
+                        trip_counter += 1
+                    
+                    if isinstance(time, list):
+                        for i in range(len(time)):
+                            stop_path_element = stop_path[stop_path_counter]
+                            if (stop_path_element == SWITCH_BUS):
+                                next_line = f"Board {route_names[shape_to_index[route_path[trip_counter]]]}"
+                                print(next_line)
+                                console_output.append(next_line)
+
+                                trip_counter += 1
+                            next_line = f"{time[i].time()} - ({stop}) {stop_id_to_name[stop]}"
+                            print(next_line)
+                            console_output.append(next_line)
+                        
+                            stop_path_counter+=1
+                    else:
+                        next_line = f"{time.time()} - ({stop}) {stop_id_to_name[stop]}"
+                        print(next_line)
+                        console_output.append(next_line)
+                    stop_path_counter += 1
+                print()
+    
+    return console_output
+
+def find_possible_paths():
+    print()
+    if len(route_paths) > 0:
+        ...
+        #print("Possible path options: ")
+    smallest_time = ''
+    for i in range(len(route_paths)):
+        route_path = route_paths[i]
+        for j in range(len(route_path)):
+            route_path[j] = index_to_shape[route_path[j]]
+        for k in range(len(stop_paths[i])):
+            time_path = get_time_path(route_path, stop_paths[i][k])
+            if time_path != None:
+                if i not in time_paths:
+                    time_paths[i] = []
+                time_paths[i].append(time_path)
+
+                last_time = time_path[list(time_path)[-1]]
+                first_time = time_path[list(time_path)[0]]
+
+                path_time = last_time - first_time
+
+                if smallest_time == '':
+                    smallest_time = path_time
+                elif path_time < smallest_time:
+                    smallest_time = path_time
+    
+    return smallest_time
+
+setup()
+orig_routes = find_routes_w_stop(ORIGIN)
+dest_routes = find_routes_w_stop(DESTINATION)
+time_paths = {}
+def main():
+    #print("Finding paths...")
+    while len(stop_paths) == 0:
+        add_leaves(route_trees, [])
+    
+    smallest_time = find_possible_paths()
+
+    if len(time_paths) == 0:
+        print("No routes found for today, try again tomorrow!")
+    else:
+        #print("Printing shortest path(s)...")
+        read_in_stops()
+        print_stop_paths(smallest_time)
+    
+main()

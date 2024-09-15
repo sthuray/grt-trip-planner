@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link
+      rel="stylesheet"
+      href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
+      integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh"
+      crossorigin="anonymous"
+    />
+    <link
+      rel="stylesheet"
+      href="https://stackpath.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css"
+      crossorigin="anonymous"
+    />
+    <title>GRT Trip Planner</title>
+</head>
+<body>
+    {% with messages = get_flashed_messages(with_categories=true) %} 
+        {% if messages %} 
+            {% for category, message in messages %} 
+                {% if category == 'error' %}
+                    <div class="alert alert-danger alter-dismissable fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="close" data-dismiss="alert">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                    </div>
+                    {% else %}
+                    <div class="alert alert-success alter-dismissable fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="close" data-dismiss="alert">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                    </div>
+                {% endif %} 
+            {% endfor %} 
+        {% endif %} 
+    {% endwith %}
+    <div class="modal-body row">
+        <div class="col-md-6">
+            <div class="container-sm justify-content-md-center align-items-center vh-100 hw-100">
+                <div class="rounded-sm p-5" style="background-color: #00308F;">
+                    <form method="POST">
+                        <br>
+                        <h2 align="center" class="text-white" style="font-family: Georgia, 'Times New Roman', Times, serif;">GRT Trip Planner</h2>
+                        <br>
+                        <div class="form-group">
+                            <label for="origin" class="text-white">Origin:</label>
+                            <input 
+                                type="stop_id"
+                                class="form-control"
+                                id="origin"
+                                name="origin"
+                                placeholder="Enter bus stop (#) of origin"
+                             />
+                        </div>
+                        <div class="form-group">
+                            <label for="destination" class="text-white">Destination:</label>
+                            <input 
+                                type="stop_id"
+                                class="form-control"
+                                id="destination"
+                                name="destination"
+                                placeholder="Enter bus stop (#) of destination"
+                            />
+                        </div>
+                        <br />
+                        <button type="submit" class="btn btn-primary">OK</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <br>
+            <h3 align="center">Trip Instructions:</h3>
+            <div class="container overflow-hidden h-1000">
+                <div class="overflow-auto" style="max-height: 750px;">
+                    {% for line in output %}
+                        {% if line != "'" %}
+                            {% set firstchar = line[:1] %}
+                            {% if line[:11] == 'Trip info: ' %}
+                                <u>{{ line }}</u>
+                            {% elif (firstchar | int) != 0%}
+                                <p>{{ line }}</p>
+                            {% else %}
+                                <center><strong>{{ line }}</strong></center>
+                            {% endif %}
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+      </div>
+
+    <script
+      src="https://code.jquery.com/jquery-3.2.1.slim.min.js"
+      integrity="sha384-KJ3o2DKtIkvYIK3UENzmM7KCkRr/rE9/Qpg6aAZGJwFDMVNA/GpGFF93hXpG5KkN"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js"
+      integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/js/bootstrap.min.js"
+      integrity="sha384-JZR6Spejh4U02d8jOt6vLEHfe/JQGiRRSQQxSfFWpi1MquVdAyjUar5+76PVCmYl"
+      crossorigin="anonymous"
+    ></script>    
+</body>
+</html>
