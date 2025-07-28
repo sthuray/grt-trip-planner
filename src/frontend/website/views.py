@@ -16,7 +16,7 @@ def home():
             print(ORIGIN)
             print(DESTINATION)
             print("Running subprocess")
-            out = subprocess.run(["python", "/Users/sayithuray/Documents/GitHub/sayithuray/GRT-trip-planner/main_scripts/find_all_paths"], input=f"{ORIGIN}\n{DESTINATION}\n", capture_output=True, text=True)
+            out = subprocess.run(["python3", "/Users/sayithuray/Documents/GitHub/grt-trip-planner/src/main_scripts/find_all_paths"], input=f"{ORIGIN}\n{DESTINATION}\n", capture_output=True, text=True)
             out = repr(out.stdout)
             out = out.split("\\n")
             print("Subprocess finished")
